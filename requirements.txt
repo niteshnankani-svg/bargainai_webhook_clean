@@ -6,3 +6,7 @@ numpy
 scikit-learn
 groq
 huggingface_hub
+flask
+requests
+twilio
+gunicorn
