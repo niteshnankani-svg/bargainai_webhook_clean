@@ -2,12 +2,14 @@ from flask import Flask, request
 from twilio.twiml.messaging_response import MessagingResponse
 from gradio_client import Client
 import traceback
+import os
 
 app = Flask(__name__)
 
 conversations = {}
 
-HF_TOKEN = "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"
+# Load from environment variable — never hardcode
+HF_TOKEN = os.environ.get("HF_TOKEN")
 
 DEFAULT_FLOOR = 749
 DEFAULT_MRP = 899
@@ -15,7 +17,7 @@ DEFAULT_MRP = 899
 print("Connecting to BargainAI Space...")
 client = Client(
     "nitz0219/BargainAI",
-    headers={"Authorization": f"Bearer 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"}
+    headers={"Authorization": f"Bearer {HF_TOKEN}"}
 )
 print("Connected!")
 
@@ -87,4 +89,5 @@ def health():
 
 
 if __name__ == "__main__":
-    app.run(debug=True, port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
