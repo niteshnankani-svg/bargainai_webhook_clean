@@ -1,0 +1,8 @@
+gradio==6.14.0
+anthropic
+transformers
+torch
+numpy
+scikit-learn
+groq
+huggingface_hub
