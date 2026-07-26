@@ -17,6 +17,23 @@ User messages (Hinglish or English) are embedded using MuRIL (Google's multiling
 - Sub-2s response latency via Groq inference
 - First open-source Hinglish negotiation agent on HuggingFace
 
+## Metrics & Evaluation
+`app.py`'s Intelligence Stack panel used to show static "80.5% / 83.17% accuracy"
+figures with no eval script or labeled test set checked into the repo to back
+them up. `eval_intent_classifier.py` + `eval_set.json` replace that with a real,
+reproducible `classification_report` (precision/recall/F1 per intent) for both
+the MuRIL (India) and BERT (Global) classifiers — run
+`python eval_intent_classifier.py`. The starter eval set is small (6 labeled
+examples per intent per market); grow it from real conversation logs for a
+number you can actually trust. Per-turn latency (classify + retrieve + Haiku
+call) is now logged and shown live in the Gradio UI under the negotiation
+panel.
+
+> Note: the Architecture section above (LLaMA 3.1 / Groq / ChromaDB) describes
+> a different implementation than `app.py`, which actually runs on Claude
+> Haiku with local MuRIL/BERT `.npy` embeddings — worth reconciling so the
+> README matches what's deployed.
+
 ## Live Demo
 🔗 [huggingface.co/spaces/nitz0219/bargainai](https://huggingface.co/spaces/nitz0219/bargainai)
 

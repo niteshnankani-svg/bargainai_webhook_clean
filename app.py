@@ -1,10 +1,41 @@
 import gradio as gr
 import json
 import numpy as np
+import time
 import torch
 import os
 import anthropic
 from transformers import AutoTokenizer, AutoModel, AutoModelForSequenceClassification
+
+# --- Rolling latency metrics (in-process; resets on restart) ---------------
+# Tracks end-to-end respond() time: MuRIL/BERT intent classification +
+# tactic retrieval + the Claude Haiku call. Capped so long-running demo
+# sessions don't grow this unbounded.
+_LATENCY_SAMPLES: list[float] = []
+_LATENCY_CAP = 500
+
+
+def _record_latency(seconds: float):
+    _LATENCY_SAMPLES.append(seconds)
+    del _LATENCY_SAMPLES[:-_LATENCY_CAP]
+
+
+def _percentile(sorted_values, pct):
+    if not sorted_values:
+        return 0.0
+    idx = min(len(sorted_values) - 1, int(round(pct / 100 * len(sorted_values))) - 1)
+    return sorted_values[max(idx, 0)]
+
+
+def latency_stats_text() -> str:
+    if not _LATENCY_SAMPLES:
+        return "No requests yet this session."
+    s = sorted(_LATENCY_SAMPLES)
+    return (
+        f"n={len(s)} | avg={sum(s) / len(s):.2f}s | "
+        f"p50={_percentile(s, 50):.2f}s | p95={_percentile(s, 95):.2f}s | "
+        f"max={s[-1]:.2f}s"
+    )
 
 MURIL_MODEL = "models/muril_finetuned"
 BERT_MODEL = "models/bert_finetuned"
@@ -45,7 +76,7 @@ class BargainingAgent:
         self.bert_embed.eval()
 
         self.claude = anthropic.Anthropic(
-            api_key=os.environ.get("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"))
+            api_key=os.environ.get("ANTHROPIC_API_KEY"))
         print("Both models ready!")
 
     def classify_intent(self, text, market):
@@ -107,6 +138,7 @@ class BargainingAgent:
         return max(current - drop, floor)
 
     def respond(self, customer_msg, current_offer, floor_price, mrp, product_name, market, gender, history):
+        _t0 = time.monotonic()
         intent, conf = self.classify_intent(customer_msg, market)
         pillar = self.get_pillar(intent)
         tactic, book, page = self.retrieve_tactic(customer_msg, market, pillar)
@@ -171,7 +203,11 @@ Write only the WhatsApp reply message. Nothing else."""
             messages=[{"role": "user", "content": prompt}]
         )
         response = message.content[0].text.strip()
-        info = f"Intent: {intent} ({conf:.0%}) | Source: {book[:35]}... Page {page} | Offer: Rs.{current_offer} → Rs.{next_offer} | Gender: {gender}"
+        latency_s = time.monotonic() - _t0
+        _record_latency(latency_s)
+        info = (f"Intent: {intent} ({conf:.0%}) | Source: {book[:35]}... Page {page} | "
+                f"Offer: Rs.{current_offer} → Rs.{next_offer} | Gender: {gender} | "
+                f"Latency: {latency_s:.2f}s")
         history.append({"role": "user", "content": customer_msg})
         history.append({"role": "assistant", "content": response})
         return history, info, next_offer, ""
@@ -214,13 +250,13 @@ body, .gradio-container {
 
 def chat(message, history, current_offer, floor_price, mrp, product_name, market, gender):
     if not message.strip():
-        return history, "", current_offer, ""
+        return history, "", current_offer, "", latency_stats_text()
     market_key = "india" if market == "India (Hinglish)" else "global"
     history, info, new_offer, _ = agent.respond(
         message, int(current_offer), int(floor_price), int(mrp),
         product_name, market_key, gender, history
     )
-    return history, info, new_offer, ""
+    return history, info, new_offer, "", latency_stats_text()
 
 
 def reset_chat(mrp):
@@ -283,14 +319,21 @@ with gr.Blocks(title="BargainAI") as demo:
             gr.HTML("""
             <div class="stack-info">
                 <div style='color:#60a5fa;font-weight:600;margin-bottom:4px;'>Intelligence Stack</div>
-                India: MuRIL fine-tuned · 80.5% accuracy<br>
-                Global: BERT fine-tuned · 83.17% accuracy<br>
+                India: MuRIL fine-tuned<br>
+                Global: BERT fine-tuned<br>
                 Gender-aware · Bhaiya / Didi / Aap<br>
                 Warm humor · Natural Hinglish<br>
                 9 books · 2,383 indexed chunks<br>
-                Claude Haiku · Real-time responses
+                Claude Haiku · Real-time responses<br>
+                <span style="color:#334155;">Run `python eval_intent_classifier.py` for a real, reproducible per-intent classification_report (precision/recall/F1) instead of a static accuracy figure.</span>
             </div>
             """)
+
+            latency_display = gr.Textbox(
+                value="No requests yet this session.",
+                label="Session Latency (classify + retrieve + Haiku call)",
+                interactive=False,
+            )
 
         with gr.Column(scale=2):
             gr.HTML("<div style='color:#60a5fa;font-size:0.82rem;font-weight:600;letter-spacing:1px;margin-bottom:8px;'>WHATSAPP NEGOTIATION SIMULATOR</div>")
@@ -351,14 +394,14 @@ with gr.Blocks(title="BargainAI") as demo:
         fn=chat,
         inputs=[msg_input, chatbot, current_offer,
                 floor_price, mrp, product_name, market, gender],
-        outputs=[chatbot, intel_bar, current_offer, msg_input]
+        outputs=[chatbot, intel_bar, current_offer, msg_input, latency_display]
     ).then(fn=update_price, inputs=[current_offer], outputs=[price_display])
 
     msg_input.submit(
         fn=chat,
         inputs=[msg_input, chatbot, current_offer,
                 floor_price, mrp, product_name, market, gender],
-        outputs=[chatbot, intel_bar, current_offer, msg_input]
+        outputs=[chatbot, intel_bar, current_offer, msg_input, latency_display]
     ).then(fn=update_price, inputs=[current_offer], outputs=[price_display])
 
     reset_btn.click(

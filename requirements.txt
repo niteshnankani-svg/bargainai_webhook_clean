@@ -3,3 +3,12 @@ twilio
 gradio_client
 gunicorn
 requests
+# The below are needed to run app.py (BargainAI Gradio demo) and
+# eval_intent_classifier.py locally — not required for whatsapp_webhook.py,
+# which only talks to the deployed HF Space via gradio_client above.
+gradio
+numpy
+torch
+transformers
+anthropic
+scikit-learn
